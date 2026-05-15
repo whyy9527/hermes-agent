@@ -1290,7 +1290,12 @@ class _SkinAwareAnsi:
 
 
 _ACCENT = _SkinAwareAnsi("response_border", "#FFD700", bold=True)
-_DIM = _SkinAwareAnsi("banner_dim", "#B8860B")
+# Use ANSI dim+italic attributes (\x1b[2;3m) instead of a hardcoded
+# hex color so dim/thinking text inherits the terminal's default
+# foreground color and stays readable in both light and dark
+# Terminal.app modes.  Hardcoded skin colors like #B8860B
+# (dark goldenrod) become invisible against light cream backgrounds.
+_DIM = "\x1b[2;3m"
 
 
 def _accent_hex() -> str:
@@ -8515,7 +8520,8 @@ class HermesCLI:
 
         set_active_skin(new_skin)
         _ACCENT.reset()  # Re-resolve ANSI color for the new skin
-        _DIM.reset()     # Re-resolve dim/secondary ANSI color for the new skin
+        # _DIM is now a fixed dim+italic ANSI escape (terminal-default fg)
+        # so it doesn't need re-resolving on skin switch.
         if save_config_value("display.skin", new_skin):
             print(f"  Skin set to: {new_skin} (saved)")
         else:
