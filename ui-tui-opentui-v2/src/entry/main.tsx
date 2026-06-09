@@ -21,6 +21,7 @@
  */
 import { render } from '@opentui/solid'
 import { Deferred, Duration, Effect } from 'effect'
+import { writeFileSync } from 'node:fs'
 
 import { readClipboardImage, writeClipboard } from '../boundary/clipboard.ts'
 import { GatewayService, type GatewayServiceShape } from '../boundary/gateway/GatewayService.ts'
@@ -60,8 +61,27 @@ const QUIT_WINDOW_MS = 3_000
  * mapResumeHistory). Shared by the launch bootstrap and the session switcher.
  * Timed (rpc_ms / hydrate_ms) for the resume profile.
  */
+/**
+ * Record the CURRENT session id in `HERMES_TUI_ACTIVE_SESSION_FILE` (item #5).
+ * The launcher reads this on exit to print the right "Resume this session with…"
+ * epilogue (hermes_cli/main.py `_print_tui_exit_summary`). The Ink TUI writes it on
+ * every session change (useSessionLifecycle.writeActiveSessionFile); the native
+ * engine must too, or the launcher falls back to the INITIAL launch session and
+ * shows resume info for the wrong session after a `/session` switch.
+ */
+const writeActiveSession = (sid: string | undefined) => {
+  const file = process.env.HERMES_TUI_ACTIVE_SESSION_FILE
+  if (!file || !sid) return
+  try {
+    writeFileSync(file, JSON.stringify({ session_id: sid }), { mode: 0o600 })
+  } catch (cause) {
+    getLog().warn('bootstrap', 'active-session-file write failed', { cause: String(cause) })
+  }
+}
+
 const resumeInto = (gateway: GatewayServiceShape, store: SessionStore, sid: string, cols: number) =>
   Effect.gen(function* () {
+    writeActiveSession(sid) // the session we're switching to is now the active one (#5)
     store.beginBuffer()
     const t0 = Date.now()
     const resumed = yield* gateway.request<{ messages?: unknown; info?: Record<string, unknown> }>('session.resume', {
@@ -127,6 +147,7 @@ const bootstrapSession = (gateway: GatewayServiceShape, store: SessionStore, inp
         return
       }
       if (created?.info) store.applyInfo(created.info)
+      writeActiveSession(sid) // record the new session for the launcher's exit epilogue (#5)
       log.info('bootstrap', 'session created', { sid })
     }
 
