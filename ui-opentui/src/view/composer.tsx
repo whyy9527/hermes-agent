@@ -322,7 +322,7 @@ export function Composer(props: {
     // With text in the buffer the Esc is just an intervening key (disarms);
     // unfocused (e.g. the agents tray owns the keys) it never counts.
     if (key.name === 'escape' && key.eventType !== 'release' && !key.ctrl && !key.meta && !key.option) {
-      if (ta?.focused === true && ta.plainText === '') {
+      if (ta?.focused === true && ta.plainText === '' && !key.defaultPrevented) {
         if (doubleEsc.press()) props.onDoubleEsc?.()
       } else {
         doubleEsc.reset()

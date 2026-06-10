@@ -133,6 +133,10 @@ export function AgentsTray(props: {
       boxRef?.blur()
       setFocused(false)
       props.onExit?.()
+      // A tray-exit Esc is CONSUMED — without this, a composer remount can
+      // register its handler after ours and the same keystroke would arm the
+      // Esc+Esc prompt-history double-press (Epic 5 review caveat).
+      key.preventDefault()
     }
   })
 
