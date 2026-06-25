@@ -567,7 +567,7 @@ export const sessionCommands: SlashCommand[] = [
           const plan = usageModel.plan_name ?? (usageModel.status === 'free' ? 'Free' : null)
 
           if (plan) {
-            sections.push({ text: `Plan: ${plan}${usageModel.renews_at ? ` · renews ${usageModel.renews_at}` : ''}` })
+            sections.push({ text: `Plan: ${plan}${usageModel.renews_display ? ` · renews ${usageModel.renews_display}` : ''}` })
           }
 
           if (barLines.length) {

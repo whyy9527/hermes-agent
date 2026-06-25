@@ -9594,6 +9594,10 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
             wait = getattr(exc, "retry_after", None)
             mins = f" (try again in ~{max(1, round(wait / 60))} min)" if wait else ""
             print(f"  🟡 Too many charges right now{mins}. This isn't a payment failure.")
+        elif code == "insufficient_scope":
+            # Never leak the raw billing:manage scope (the post-grant replay can
+            # re-raise it if the grant raced) — the concept is "terminal billing".
+            print("  🔴 Terminal billing needs approval — run /topup to enable it, then retry.")
         else:
             print(f"  🔴 {exc}")
         if portal_url:

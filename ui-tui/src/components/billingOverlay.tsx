@@ -1,5 +1,5 @@
 import { Box, Text, useInput } from '@hermes/ink'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 
 import type { BillingOverlayState } from '../app/interfaces.js'
 import type { BillingStateResponse } from '../gatewayTypes.js'
@@ -55,12 +55,7 @@ export function BillingOverlay({ onClose, onPatch, overlay, t }: BillingOverlayP
       {screen === 'autoreload' && <AutoReloadScreen ctx={ctx} onClose={onClose} onPatch={onPatch} s={s} t={t} />}
       {screen === 'limit' && <LimitScreen ctx={ctx} onClose={onClose} onPatch={onPatch} s={s} t={t} />}
       {screen === 'stepup' && (
-        <StepUpScreen
-          amount={overlay.pendingCharge?.amount ?? ''}
-          ctx={ctx}
-          onClose={onClose}
-          t={t}
-        />
+        <StepUpScreen amount={overlay.pendingCharge?.amount ?? ''} ctx={ctx} onClose={onClose} t={t} />
       )}
     </Box>
   )
@@ -332,12 +327,17 @@ function ConfirmScreen({
   // rows: Pay $X now / Cancel
   const [sel, setSel] = useState(0)
   const [submitting, setSubmitting] = useState(false)
+  // Synchronous guard: two key events can both observe `submitting === false`
+  // before React commits the state update, double-firing the charge (and the
+  // gateway mints a fresh idempotency key per call → two charges).
+  const submittingRef = useRef(false)
 
   const pay = () => {
-    if (submitting) {
+    if (submittingRef.current || submitting) {
       return
     }
 
+    submittingRef.current = true
     setSubmitting(true)
     void ctx.charge(amount).then(outcome => {
       if (outcome === 'needs_remote_spending') {
@@ -393,9 +393,7 @@ function ConfirmScreen({
       </Text>
       <Text color={t.color.text}>Total: ${amount}</Text>
       <Text color={t.color.muted}>{payLine}</Text>
-      {s.card && (
-        <Text color={t.color.muted}>Your card saved on the portal will be charged.</Text>
-      )}
+      {s.card && <Text color={t.color.muted}>Your card saved on the portal will be charged.</Text>}
       <Text color={t.color.muted}>By confirming, you allow Nous Research to charge your card.</Text>
       <Text />
       <ActionRow active={sel === 0} color={t.color.ok} label={`Pay $${amount} now`} t={t} />
@@ -439,7 +437,9 @@ function StepUpScreen({
 
     void ctx.requestRemoteSpending().then(granted => {
       if (!granted) {
-        ctx.sys("! Couldn't enable terminal billing — an org admin or owner has to approve it. Your card was not charged.")
+        ctx.sys(
+          "! Couldn't enable terminal billing — an org admin or owner has to approve it. Your card was not charged."
+        )
         onClose()
 
         return
@@ -458,7 +458,15 @@ function StepUpScreen({
 
     setPhase('resuming')
     ctx.sys('✓ Terminal billing enabled — resuming your purchase.')
-    void ctx.charge(amount).then(() => onClose())
+    void ctx.charge(amount).then(outcome => {
+      // If the replay STILL can't spend (grant raced/expired or downscoped),
+      // say so — don't close on a reassuring line with no charge made.
+      if (outcome === 'needs_remote_spending') {
+        ctx.sys('! Terminal billing still needs approval — run /topup to try again. Your card was not charged.')
+      }
+
+      onClose()
+    })
   }
 
   const decline = () => {
@@ -567,7 +575,9 @@ function StepUpScreen({
         One-time setup
       </Text>
       <Text color={t.color.text}>To charge this terminal, enable terminal billing once.</Text>
-      <Text color={t.color.muted}>It opens your browser to authorize, then your ${amount} top-up picks up right here.</Text>
+      <Text color={t.color.muted}>
+        It opens your browser to authorize, then your ${amount} top-up picks up right here.
+      </Text>
       <Text />
       <ActionRow active={sel === 0} color={t.color.ok} label="Enable terminal billing" t={t} />
       <ActionRow active={sel === 1} label="Not now" t={t} />
@@ -652,7 +662,12 @@ function AutoReloadScreen({ ctx, onClose, onPatch, s, t }: ScreenProps) {
   }
 
   const turnOff = () => {
-    void ctx.applyAutoReload(false).then(ok => {
+    // The PATCH requires threshold/top_up_amount even when disabling (parity
+    // with the CLI's _billing_auto_reload_disable) — echo the current values,
+    // else the gateway rejects with invalid_request and auto-reload stays ON.
+    const thr = Number(prefill(ar?.threshold_usd)) || 0
+    const rel = Number(prefill(ar?.reload_to_usd)) || 0
+    void ctx.applyAutoReload(false, thr, rel).then(ok => {
       if (ok) {
         ctx.sys('✅ Auto-reload turned off.')
       }

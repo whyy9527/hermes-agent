@@ -46,9 +46,10 @@ const renderBillingError = (
       // wait for the token refresh ~15 min away) and tell the user who did it.
       patchOverlayState({ billing: null })
 
-      const who = env.actor === 'admin'
-        ? 'An admin turned off terminal billing for this terminal.'
-        : 'You turned off terminal billing for this terminal.'
+      const who =
+        env.actor === 'admin'
+          ? 'An admin turned off terminal billing for this terminal.'
+          : 'You turned off terminal billing for this terminal.'
 
       sys(`${who} Reconnect to restore — run /portal to re-authorize this terminal.`)
 
@@ -91,7 +92,11 @@ const renderBillingError = (
     case 'monthly_cap_exceeded': {
       // Surface the remaining headroom the server attaches (parity with the CLI).
       const remaining = env.payload?.remainingUsd
-      sys(remaining != null ? `🔴 Monthly spend cap reached — $${remaining} headroom left.` : '🔴 Monthly spend cap reached.')
+      sys(
+        remaining != null
+          ? `🔴 Monthly spend cap reached — $${remaining} headroom left.`
+          : '🔴 Monthly spend cap reached.'
+      )
 
       break
     }
@@ -137,6 +142,24 @@ const requestRemoteSpending = (ctx: SlashRunCtx): Promise<boolean> =>
 const pollCharge = (sys: Sys, ctx: SlashRunCtx, chargeId: string, portalUrl?: string | null): void => {
   const start = Date.now()
 
+  // The 5-min cap, honored on EVERY non-terminal path (pending AND throttled)
+  // so a sustained 429/503 can't keep the poll alive forever.
+  const timedOut = (): boolean => {
+    if (Date.now() - start < POLL_CAP_MS) {
+      return false
+    }
+
+    sys(
+      '🟡 Still processing after 5 minutes — this is a timeout, not a failure. ' + 'Check /topup or the portal shortly.'
+    )
+
+    if (portalUrl) {
+      sys(`Portal: ${portalUrl}`)
+    }
+
+    return true
+  }
+
   const tick = (): void => {
     if (ctx.stale()) {
       return
@@ -149,6 +172,10 @@ const pollCharge = (sys: Sys, ctx: SlashRunCtx, chargeId: string, portalUrl?: st
           if (!r.ok) {
             // 429/503 while polling = retry-after, NOT a failure. Back off + continue.
             if (r.error === 'rate_limited' || r.error === 'temporarily_unavailable') {
+              if (timedOut()) {
+                return
+              }
+
               const wait = (r.retry_after ?? 5) * 1000
               setTimeout(tick, Math.min(wait, 30000))
 
@@ -183,16 +210,7 @@ const pollCharge = (sys: Sys, ctx: SlashRunCtx, chargeId: string, portalUrl?: st
           }
 
           // pending → keep polling until the 5-min cap, then call it a timeout.
-          if (Date.now() - start >= POLL_CAP_MS) {
-            sys(
-              '🟡 Still processing after 5 minutes — this is a timeout, not a failure. ' +
-                'Check /topup or the portal shortly.'
-            )
-
-            if (portalUrl) {
-              sys(`Portal: ${portalUrl}`)
-            }
-
+          if (timedOut()) {
             return
           }
 

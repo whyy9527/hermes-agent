@@ -174,6 +174,13 @@ _DETAIL_MODES = frozenset({"hidden", "collapsed", "expanded"})
 # response writes are safe.
 _LONG_HANDLERS = frozenset(
     {
+        # Billing/usage reads each do a blocking portal HTTP fetch (state + usage
+        # is two serial round-trips); keep them off the main stdin loop so a slow
+        # portal can't stall approval.respond / session.interrupt / other RPCs.
+        "billing.state",
+        "subscription.state",
+        "usage.bars",
+        "session.usage",
         "billing.step_up",
         "browser.manage",
         "cli.exec",
@@ -5819,6 +5826,7 @@ def _(rid, params: dict) -> dict:
     sid = params.get("session_id") or ""
     try:
         from hermes_cli.auth import step_up_nous_billing_scope
+        from hermes_cli.nous_billing import BillingError
 
         def _on_verification(url: str, code: str) -> None:
             _emit(
@@ -5831,6 +5839,13 @@ def _(rid, params: dict) -> dict:
             open_browser=False, on_verification=_on_verification
         )
         return _ok(rid, {"ok": True, "granted": bool(granted)})
+    except BillingError as exc:
+        # Route typed billing errors (e.g. session_revoked when the token expires
+        # mid-device-flow) through the shared spine like the other write handlers,
+        # so the TUI maps them to the right copy instead of a generic failure.
+        env = _serialize_billing_error(exc)
+        env["granted"] = False
+        return _ok(rid, env)
     except Exception as exc:
         return _ok(rid, {"ok": False, "error": "error", "message": str(exc), "granted": False})
 

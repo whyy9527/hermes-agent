@@ -101,6 +101,19 @@ class SubscriptionState:
 # =============================================================================
 
 
+def _coalesce(*vals: Any) -> Any:
+    """First non-None value (None-coalesce, NOT truthy-coalesce — keeps 0/0.0).
+
+    NAS sends 0 for the free tier's dollarsPerMonth/tierOrder; a bare ``a or b``
+    would treat that 0 as missing and fall through to the alias (yielding a '—'
+    price or a corrupted sort index).
+    """
+    for v in vals:
+        if v is not None:
+            return v
+    return None
+
+
 def _parse_tier(raw: Any) -> Optional[SubscriptionTier]:
     if not isinstance(raw, dict):
         return None
@@ -111,8 +124,8 @@ def _parse_tier(raw: Any) -> Optional[SubscriptionTier]:
     return SubscriptionTier(
         tier_id=tier_id,
         name=name,
-        tier_order=int(raw.get("tierOrder") or raw.get("order") or 0),
-        dollars_per_month=parse_money(raw.get("dollarsPerMonth") or raw.get("priceUsd")),
+        tier_order=int(_coalesce(raw.get("tierOrder"), raw.get("order"), 0)),
+        dollars_per_month=parse_money(_coalesce(raw.get("dollarsPerMonth"), raw.get("priceUsd"))),
         monthly_credits=parse_money(raw.get("monthlyCredits")),
         is_current=bool(raw.get("isCurrent")),
         is_enabled=bool(raw.get("isEnabled", True)),

@@ -104,9 +104,10 @@ function OverviewScreen({ ctx, onClose, s, t }: ScreenProps) {
       : 'Cancellation scheduled — your plan stays active until the end of the billing period.'
     : null
 
-  const downgradeNote = !isCancelScheduled && hasPendingDowngrade
-    ? `Scheduled to switch to ${c?.pending_downgrade_tier_name} on ${c?.pending_downgrade_at}.`
-    : null
+  const downgradeNote =
+    !isCancelScheduled && hasPendingDowngrade
+      ? `Scheduled to switch to ${c?.pending_downgrade_tier_name} on ${c?.pending_downgrade_at ?? 'the end of the billing period'}.`
+      : null
 
   // State-matched upsell/alert nudge (dollars-only; healthy stays silent).
   const u = s.usage
@@ -130,6 +131,8 @@ function OverviewScreen({ ctx, onClose, s, t }: ScreenProps) {
       if (s.portal_url) {
         ctx.sys('Opening your subscription page in the browser…')
         void ctx.openManageLink()
+      } else {
+        ctx.sys('🔴 No portal URL available — manage your subscription on the Nous portal.')
       }
     }
 
@@ -168,12 +171,18 @@ function OverviewScreen({ ctx, onClose, s, t }: ScreenProps) {
       <UsageBars model={s.usage} t={t} />
       {freeNudge && (
         <Box marginTop={1}>
-          <Text color={t.color.warn}>{'> '}{freeNudge}</Text>
+          <Text color={t.color.warn}>
+            {'> '}
+            {freeNudge}
+          </Text>
         </Box>
       )}
       {lowNudge && (
         <Box marginTop={1}>
-          <Text color={t.color.warn}>{'! '}{lowNudge}</Text>
+          <Text color={t.color.warn}>
+            {'! '}
+            {lowNudge}
+          </Text>
         </Box>
       )}
       {s.org_name && (
@@ -232,12 +241,10 @@ function TeamContextScreen({ onClose, s, t }: TeamContextScreenProps) {
       )}
       <Text />
       <Text color={t.color.text}>
-        This terminal is connected to {s.org_name ?? 'a team org'}. Teams run on a shared
-        balance · use /topup to add funds.
+        This terminal is connected to {s.org_name ?? 'a team org'}. Teams run on a shared balance · use /topup to add
+        funds.
       </Text>
-      <Text color={t.color.muted}>
-        Personal subscriptions live on your personal account.
-      </Text>
+      <Text color={t.color.muted}>Personal subscriptions live on your personal account.</Text>
 
       <Text />
       {footer('Enter/Esc close', t)}

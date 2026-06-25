@@ -18,9 +18,17 @@ function buildManageUrl(s: SubscriptionStateResponse): string | null {
   // portal_url is already an absolute URL resolved by resolve_portal_base_url()
   // on the Python side (e.g. https://portal.nousresearch.com/billing). Strip any
   // path so we can attach /manage-subscription cleanly.
-  const base = s.portal_url
-    ? new URL(s.portal_url).origin
-    : null
+  let base: string | null = null
+
+  if (s.portal_url) {
+    try {
+      base = new URL(s.portal_url).origin
+    } catch {
+      // A malformed portal_url must not throw out of the Ink key handler
+      // (it would crash the overlay) — treat it as "no manage URL".
+      return null
+    }
+  }
 
   if (!base) {
     return null
