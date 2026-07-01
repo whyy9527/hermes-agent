@@ -264,3 +264,55 @@ def test_upgrade_transport_failure_is_ambiguous_not_flat_failure(cli, monkeypatc
     assert "may or may not have been charged" in out
     assert "Re-run /subscription" in out
     assert "could not be completed" not in out  # not the old flat failure
+
+
+def test_upgrade_rate_limit_is_deterministic_not_ambiguous(cli, monkeypatch, capsys):
+    # R2: a typed PRE-charge rejection (429 rate-limit) must NOT be mislabeled
+    # "may or may not have been charged" — it never reached Stripe. It gets the
+    # normal error copy, not the ambiguous one.
+    cli._app = object()
+    st = _sub_state(tier_id="plus", tier_name="Plus")
+    tiers = tuple(
+        SubscriptionTier(tier_id=t.tier_id, name=t.name, tier_order=t.tier_order, dollars_per_month=t.dollars_per_month, monthly_credits=t.monthly_credits, is_current=(t.tier_id == "plus"), is_enabled=True)
+        for t in _TIERS
+    )
+    object.__setattr__(st, "tiers", tiers)
+    monkeypatch.setattr(sv, "build_subscription_state", lambda *a, **kw: st)
+    monkeypatch.setattr(HermesCLI, "_prompt_text_input_modal", _scripted_modal("change", "ultra", "yes"), raising=False)
+    monkeypatch.setattr(nb, "post_subscription_preview", lambda **kw: {"effect": "charge_now", "targetTierName": "Ultra", "amountDueNowCents": 4630})
+
+    def _rl(**kw):
+        raise nb.BillingRateLimited("Slow down — too many requests.", error="rate_limited", status=429, retry_after=30)
+
+    monkeypatch.setattr(nb, "post_subscription_upgrade", _rl)
+
+    cli._show_subscription()
+    out = capsys.readouterr().out
+
+    assert "may or may not have been charged" not in out  # NOT the ambiguous copy
+    assert "Slow down" in out  # the real, deterministic error
+
+
+def test_upgrade_transport_failure_still_ambiguous_after_narrowing(cli, monkeypatch, capsys):
+    # Regression floor for R2: a genuine transport failure (network_error, no status)
+    # must STILL be ambiguous after the narrowing.
+    cli._app = object()
+    st = _sub_state(tier_id="plus", tier_name="Plus")
+    tiers = tuple(
+        SubscriptionTier(tier_id=t.tier_id, name=t.name, tier_order=t.tier_order, dollars_per_month=t.dollars_per_month, monthly_credits=t.monthly_credits, is_current=(t.tier_id == "plus"), is_enabled=True)
+        for t in _TIERS
+    )
+    object.__setattr__(st, "tiers", tiers)
+    monkeypatch.setattr(sv, "build_subscription_state", lambda *a, **kw: st)
+    monkeypatch.setattr(HermesCLI, "_prompt_text_input_modal", _scripted_modal("change", "ultra", "yes"), raising=False)
+    monkeypatch.setattr(nb, "post_subscription_preview", lambda **kw: {"effect": "charge_now", "targetTierName": "Ultra", "amountDueNowCents": 4630})
+
+    def _net(**kw):
+        raise nb.BillingError("Could not reach Nous Portal: timeout", error="network_error")
+
+    monkeypatch.setattr(nb, "post_subscription_upgrade", _net)
+
+    cli._show_subscription()
+    out = capsys.readouterr().out
+
+    assert "may or may not have been charged" in out

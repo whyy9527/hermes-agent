@@ -9923,7 +9923,10 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
         """
         from hermes_cli.nous_billing import (
             BillingError,
+            BillingRateLimited,
+            BillingRemoteSpendingRevoked,
             BillingScopeRequired,
+            BillingSessionRevoked,
             delete_subscription_pending_change,
             post_subscription_upgrade,
             put_subscription_pending_change,
@@ -9941,12 +9944,25 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
                     res = post_subscription_upgrade(subscription_type_id=arg, idempotency_key=key) or {}
                 except BillingScopeRequired:
                     raise  # a scope denial rejects BEFORE charging → route to the step-up
+                except (BillingRateLimited, BillingSessionRevoked, BillingRemoteSpendingRevoked) as exc:
+                    # Deterministic PRE-charge typed rejections (429 / 401 / 403) never
+                    # reached Stripe → surface the CORRECT recovery (retry_after / re-login /
+                    # reconnect), NOT the "maybe charged" ambiguity copy.
+                    self._subscription_render_error(state, exc)
+                    return
                 except BillingError as exc:
-                    # Any OTHER error on the charging route (transport / timeout / 500)
-                    # is AMBIGUOUS — NAS may have already prorated + charged. Steer to a
-                    # re-check; never a flat failure that invites a blind retry (which
-                    # mints a fresh key the server can't dedup → a real second charge).
-                    self._subscription_render_upgrade_ambiguous(exc)
+                    _status = getattr(exc, "status", None)
+                    _code = getattr(exc, "error", None)
+                    if _code in ("network_error", "endpoint_unavailable") or _status is None or _status >= 500:
+                        # Genuinely INDETERMINATE — transport / unparseable 2xx / a 5xx the
+                        # server hit mid-request: NAS may have already prorated + charged.
+                        # Steer to a re-check, never a blind retry (a fresh key can't dedup →
+                        # a real second charge).
+                        self._subscription_render_upgrade_ambiguous(exc)
+                    else:
+                        # A deterministic 4xx (role_required / no_payment_method / …) → the
+                        # normal error copy, not "maybe charged".
+                        self._subscription_render_error(state, exc)
                     return
                 status = res.get("status")
                 name = res.get("targetTierName") or "your new plan"
