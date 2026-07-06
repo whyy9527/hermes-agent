@@ -29,6 +29,7 @@ from gateway.config import Platform
 from tools.send_message_tool import (
     _parse_target_ref,
     _resolve_slack_user_target,
+    _send_bluebubbles,
     _send_matrix_via_adapter,
     _send_signal,
     _send_telegram,
@@ -237,6 +238,73 @@ def _make_config():
         platforms={Platform.TELEGRAM: telegram_cfg},
         get_home_channel=lambda _platform: None,
     ), telegram_cfg
+
+
+@pytest.mark.asyncio
+async def test_send_bluebubbles_uses_send_only_connection(monkeypatch):
+    import gateway.platforms.bluebubbles as bluebubbles_mod
+
+    calls = []
+
+    class FakeBlueBubblesAdapter:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def connect(self, *, send_only=False):
+            calls.append(("connect", send_only))
+            return True
+
+        async def send(self, chat_id, message):
+            calls.append("send")
+            return SimpleNamespace(success=True, message_id="msg-1")
+
+        async def disconnect(self):
+            calls.append("disconnect")
+
+    monkeypatch.setattr(bluebubbles_mod, "BlueBubblesAdapter", FakeBlueBubblesAdapter)
+    monkeypatch.setattr(bluebubbles_mod, "check_bluebubbles_requirements", lambda: True)
+
+    result = await _send_bluebubbles(
+        {"server_url": "http://localhost:1234", "password": "secret"},
+        "+15551234567",
+        "hello",
+    )
+
+    assert result["success"] is True
+    assert result["message_id"] == "msg-1"
+    assert calls == [("connect", True), "send", "disconnect"]
+
+
+@pytest.mark.asyncio
+async def test_bluebubbles_send_only_connection_does_not_write_runtime_status(monkeypatch):
+    from gateway.config import PlatformConfig
+    from gateway.platforms.bluebubbles import BlueBubblesAdapter
+
+    class FakeAsyncClient:
+        async def aclose(self):
+            pass
+
+    adapter = BlueBubblesAdapter(
+        PlatformConfig(extra={"server_url": "http://localhost:1234", "password": "secret"})
+    )
+    calls = []
+
+    async def fake_api_get(path):
+        if path == "/api/v1/server/info":
+            return {"data": {}}
+        return {"data": "pong"}
+
+    monkeypatch.setattr("gateway.platforms.bluebubbles.httpx.AsyncClient", lambda **_: FakeAsyncClient())
+    monkeypatch.setattr(adapter, "_api_get", fake_api_get)
+    monkeypatch.setattr(adapter, "_mark_connected", lambda: calls.append("connected"))
+    monkeypatch.setattr(adapter, "_mark_disconnected", lambda: calls.append("disconnected"))
+    monkeypatch.setattr(adapter, "_unregister_webhook", AsyncMock())
+
+    assert await adapter.connect(send_only=True) is True
+    await adapter.disconnect()
+
+    assert calls == []
+    adapter._unregister_webhook.assert_not_awaited()
 
 
 def _install_telegram_mock(monkeypatch, bot):
