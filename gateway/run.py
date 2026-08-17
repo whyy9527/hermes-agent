@@ -8620,6 +8620,41 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             return text
         return (enriched_text or text).strip()
 
+    @staticmethod
+    def _log_inbound_message_once(event: MessageEvent, source) -> None:
+        """Record one accepted platform event before any busy-path redirect.
+
+        Busy follow-ups can bypass ``_handle_message_with_agent`` when they are
+        delivered through active-turn steer/redirect.  Logging at this shared
+        boundary preserves the original reply target for deterministic
+        consumers without asking the running agent to author downstream state.
+        The event-local marker prevents a queued fallback from being logged a
+        second time when it later becomes a normal turn.
+        """
+        if event.metadata.get("_hermes_inbound_logged"):
+            return
+        platform_name = (
+            source.platform.value
+            if hasattr(source.platform, "value")
+            else str(source.platform)
+        )
+        message_preview = (event.text or "")[:80].replace("\n", " ")
+        reply_id = getattr(event, "reply_to_message_id", None)
+        reply_text = (getattr(event, "reply_to_text", None) or "")[:80].replace(
+            "\n", " "
+        )
+        logger.info(
+            "inbound message: platform=%s user=%s chat=%s msg=%r "
+            "reply_to_id=%s reply_to_text=%r",
+            platform_name,
+            source.user_name or source.user_id or "unknown",
+            source.chat_id or "unknown",
+            message_preview,
+            reply_id,
+            reply_text,
+        )
+        event.metadata["_hermes_inbound_logged"] = True
+
     async def _handle_active_session_busy_message(self, event: MessageEvent, session_key: str) -> bool:
         # --- Authorization gate (#17775) ---
         # The cold path (_handle_message) checks _is_user_authorized before
@@ -8832,6 +8867,8 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                 and hasattr(running_agent, "steer")
             )
             if can_steer:
+                # A successful steer bypasses the normal agent-turn path.
+                self._log_inbound_message_once(event, event.source)
                 try:
                     steered = bool(running_agent.steer(steer_text))
                 except Exception as exc:
@@ -8850,6 +8887,9 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             and getattr(running_agent, "_supports_active_turn_redirect", False) is True
             and hasattr(running_agent, "redirect")
         ):
+            # Native Codex turn/steer can consume this event without creating
+            # a later gateway turn, so retain its reply target first.
+            self._log_inbound_message_once(event, event.source)
             try:
                 redirected = bool(running_agent.redirect((event.text or "").strip()))
             except Exception as exc:
@@ -16154,14 +16194,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         """Inner handler that runs under the _running_agents sentinel guard."""
         _msg_start_time = time.time()
         _platform_name = source.platform.value if hasattr(source.platform, "value") else str(source.platform)
-        _msg_preview = (event.text or "")[:80].replace("\n", " ")
-        _reply_id = getattr(event, "reply_to_message_id", None)
-        _reply_txt = (getattr(event, "reply_to_text", None) or "")[:80].replace("\n", " ")
-        logger.info(
-            "inbound message: platform=%s user=%s chat=%s msg=%r reply_to_id=%s reply_to_text=%r",
-            _platform_name, source.user_name or source.user_id or "unknown",
-            source.chat_id or "unknown", _msg_preview, _reply_id, _reply_txt,
-        )
+        self._log_inbound_message_once(event, source)
 
         # Get or create session
         # Topic-mode DMs: rewrite a stale/foreign thread_id to the user's

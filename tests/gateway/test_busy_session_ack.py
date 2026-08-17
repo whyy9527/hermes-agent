@@ -471,3 +471,75 @@ class TestLongRunningNotificationOwnership:
         ) is False
 
 
+class TestBusyInboundLogging:
+    @pytest.mark.asyncio
+    async def test_successful_native_redirect_logs_reply_target_once(
+        self, caplog: pytest.LogCaptureFixture
+    ):
+        runner, _sentinel = _make_runner()
+        runner._busy_input_mode = "interrupt"
+        adapter = _make_adapter("bluebubbles")
+        source = SessionSource(
+            platform=Platform.BLUEBUBBLES,
+            chat_id="chat-guid",
+            chat_type="private",
+            user_id="owner",
+        )
+        event = MessageEvent(
+            text="Disliked: item",
+            message_type=MessageType.TEXT,
+            source=source,
+            message_id="reaction-guid",
+            reply_to_message_id="p:0/outbound-guid",
+        )
+        session_key = build_session_key(source)
+        agent = MagicMock()
+        agent._active_children = []
+        agent._supports_active_turn_redirect = True
+        agent.redirect = MagicMock(return_value=True)
+        agent.get_activity_summary.return_value = {}
+        runner._running_agents[session_key] = agent
+        runner.adapters[source.platform] = adapter
+
+        with caplog.at_level("INFO", logger="gateway.run"):
+            handled = await runner._handle_active_session_busy_message(
+                event, session_key
+            )
+
+        assert handled is True
+        agent.redirect.assert_called_once_with("Disliked: item")
+        inbound = [
+            record.getMessage()
+            for record in caplog.records
+            if "inbound message: platform=bluebubbles" in record.getMessage()
+        ]
+        assert len(inbound) == 1
+        assert "reply_to_id=p:0/outbound-guid" in inbound[0]
+
+    def test_event_marker_prevents_queued_fallback_duplicate(
+        self, caplog: pytest.LogCaptureFixture
+    ):
+        from gateway.run import GatewayRunner
+
+        source = SessionSource(
+            platform=Platform.BLUEBUBBLES,
+            chat_id="chat-guid",
+            chat_type="private",
+            user_id="owner",
+        )
+        event = MessageEvent(
+            text="Disliked: item",
+            source=source,
+            reply_to_message_id="p:0/outbound-guid",
+        )
+
+        with caplog.at_level("INFO", logger="gateway.run"):
+            GatewayRunner._log_inbound_message_once(event, source)
+            GatewayRunner._log_inbound_message_once(event, source)
+
+        inbound = [
+            record.getMessage()
+            for record in caplog.records
+            if "inbound message: platform=bluebubbles" in record.getMessage()
+        ]
+        assert len(inbound) == 1
