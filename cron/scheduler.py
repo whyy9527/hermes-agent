@@ -2110,32 +2110,39 @@ _SCRIPT_TIMEOUT = _DEFAULT_SCRIPT_TIMEOUT
 _RUN_CLAIM_HEARTBEAT_SECONDS = 60.0
 
 
-def _get_script_timeout() -> int:
-    """Resolve cron pre-run script timeout from module/env/config with a safe default."""
-    if _SCRIPT_TIMEOUT != _DEFAULT_SCRIPT_TIMEOUT:
+def _get_script_timeout() -> Optional[int]:
+    """Resolve cron pre-run script timeout; zero disables the wall-clock limit."""
+    def parse_timeout(value: Any) -> tuple[bool, Optional[int]]:
         try:
-            timeout = int(float(_SCRIPT_TIMEOUT))
-            if timeout > 0:
-                return timeout
-        except Exception:
-            logger.warning("Invalid patched _SCRIPT_TIMEOUT=%r; using env/config/default", _SCRIPT_TIMEOUT)
+            seconds = float(value)
+            if seconds == 0:
+                return True, None
+            if seconds >= 1:
+                return True, int(seconds)
+        except (TypeError, ValueError, OverflowError):
+            return False, None
+        return False, None
+
+    if _SCRIPT_TIMEOUT != _DEFAULT_SCRIPT_TIMEOUT:
+        valid, timeout = parse_timeout(_SCRIPT_TIMEOUT)
+        if valid:
+            return timeout
+        logger.warning("Invalid patched _SCRIPT_TIMEOUT=%r; using env/config/default", _SCRIPT_TIMEOUT)
 
     env_value = os.getenv("HERMES_CRON_SCRIPT_TIMEOUT", "").strip()
     if env_value:
-        try:
-            timeout = int(float(env_value))
-            if timeout > 0:
-                return timeout
-        except Exception:
-            logger.warning("Invalid HERMES_CRON_SCRIPT_TIMEOUT=%r; using config/default", env_value)
+        valid, timeout = parse_timeout(env_value)
+        if valid:
+            return timeout
+        logger.warning("Invalid HERMES_CRON_SCRIPT_TIMEOUT=%r; using config/default", env_value)
 
     try:
         cfg = load_config() or {}
         cron_cfg = cfg.get("cron", {}) if isinstance(cfg, dict) else {}
         configured = cron_cfg.get("script_timeout_seconds")
         if configured is not None:
-            timeout = int(float(configured))
-            if timeout > 0:
+            valid, timeout = parse_timeout(configured)
+            if valid:
                 return timeout
     except Exception as exc:
         logger.debug("Failed to load cron script timeout from config: %s", exc)

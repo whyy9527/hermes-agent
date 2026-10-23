@@ -84,6 +84,90 @@ def test_cronjob_tool_rejects_stale_past_one_shot(cron_env, monkeypatch):
 class TestRunJobScript:
     """Test the _run_job_script() function."""
 
+    @pytest.mark.parametrize(
+        ("source", "configured", "expected"),
+        [
+            ("module", 0, None),
+            ("env", 0, None),
+            ("config", 0, None),
+            ("module", -0.5, 3600),
+            ("env", -0.5, 3600),
+            ("config", -0.5, 3600),
+            ("module", 0.5, 3600),
+            ("env", 0.5, 3600),
+            ("config", 0.5, 3600),
+            ("module", float("inf"), 3600),
+            ("env", float("inf"), 3600),
+            ("config", float("inf"), 3600),
+            ("module", float("nan"), 3600),
+            ("env", float("nan"), 3600),
+            ("config", float("nan"), 3600),
+        ],
+    )
+    def test_zero_and_fractional_timeout_parsing(
+        self, cron_env, monkeypatch, source, configured, expected
+    ):
+        import cron.scheduler as scheduler
+
+        monkeypatch.delenv("HERMES_CRON_SCRIPT_TIMEOUT", raising=False)
+        monkeypatch.setattr(scheduler, "_SCRIPT_TIMEOUT", scheduler._DEFAULT_SCRIPT_TIMEOUT)
+        monkeypatch.setattr(scheduler, "load_config", lambda: {"cron": {}})
+
+        if source == "module":
+            monkeypatch.setattr(scheduler, "_SCRIPT_TIMEOUT", configured)
+        elif source == "env":
+            monkeypatch.setenv("HERMES_CRON_SCRIPT_TIMEOUT", str(configured))
+        else:
+            monkeypatch.setattr(
+                scheduler,
+                "load_config",
+                lambda: {"cron": {"script_timeout_seconds": configured}},
+            )
+
+        assert scheduler._get_script_timeout() == expected
+
+    @pytest.mark.parametrize(
+        ("configured", "expected"),
+        [(0, None), (45, 45), (-1, 3600), ("invalid", 3600)],
+    )
+    def test_script_timeout_config_resolution(self, cron_env, monkeypatch, configured, expected):
+        import cron.scheduler as scheduler
+
+        monkeypatch.delenv("HERMES_CRON_SCRIPT_TIMEOUT", raising=False)
+        monkeypatch.setattr(scheduler, "_SCRIPT_TIMEOUT", scheduler._DEFAULT_SCRIPT_TIMEOUT)
+        monkeypatch.setattr(
+            scheduler,
+            "load_config",
+            lambda: {"cron": {"script_timeout_seconds": configured}},
+        )
+
+        assert scheduler._get_script_timeout() == expected
+
+    def test_zero_script_timeout_disables_subprocess_wall_clock_limit(
+        self, cron_env, monkeypatch
+    ):
+        import cron.scheduler as scheduler
+
+        script = cron_env / "scripts" / "unbounded.py"
+        script.write_text("# subprocess is mocked")
+        monkeypatch.delenv("HERMES_CRON_SCRIPT_TIMEOUT", raising=False)
+        monkeypatch.setattr(scheduler, "_SCRIPT_TIMEOUT", scheduler._DEFAULT_SCRIPT_TIMEOUT)
+        monkeypatch.setattr(scheduler, "load_config", lambda: {"cron": {"script_timeout_seconds": 0}})
+        completed = SimpleNamespace(returncode=0, stdout="done", stderr="")
+        observed = {}
+
+        def fake_run(*args, **kwargs):
+            observed.update(kwargs)
+            return completed
+
+        monkeypatch.setattr(scheduler.subprocess, "run", fake_run)
+        success, output = scheduler._run_job_script(str(script))
+
+        assert success is True
+        assert output == "done"
+        # subprocess.run interprets None as no wall-clock timeout.
+        assert observed["timeout"] is None
+
     def test_successful_script(self, cron_env):
         from cron.scheduler import _run_job_script
 

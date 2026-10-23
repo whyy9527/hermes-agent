@@ -412,7 +412,7 @@ Otherwise, report the issue.
 
 ## 脚本超时
 
-预运行脚本（通过 `script` 参数附加）的默认超时为 120 秒。如果你的脚本需要更长时间——例如，包含随机延迟以避免类机器人的时序模式——可以增加此值：
+预运行脚本（通过 `script` 参数附加）的默认超时为 3600 秒。将 `script_timeout_seconds` 设为 `0` 可取消墙钟时限。若要设置其他有限时长，可配置此值：
 
 ```yaml
 # ~/.hermes/config.yaml
@@ -420,7 +420,9 @@ cron:
   script_timeout_seconds: 300   # 5 分钟
 ```
 
-或设置 `HERMES_CRON_SCRIPT_TIMEOUT` 环境变量。解析顺序为：环境变量 → config.yaml → 默认 120 秒。
+设为 `0` 表示不设墙钟时限。
+
+或设置 `HERMES_CRON_SCRIPT_TIMEOUT` 环境变量。解析顺序为：环境变量 → config.yaml → 默认 3600 秒。
 
 ## 无 agent 模式（纯脚本任务）
 

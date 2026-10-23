@@ -526,7 +526,7 @@ Graph 事件（Teams 会议、日历、聊天等）的入站变更通知监听�
 | `HERMES_GATEWAY_BOOTSTRAP_STATE` | 在 s6-overlay Docker 镜像内部，为**全新卷**声明 gateway 的初始受监管状态。空白卷上不存在持久化的 `gateway_state.json`，因此启动协调器会注册 `gateway-default` 槽位但保持其**关闭**（只有上次记录状态为 `running` 时才会自动启动）。将此变量设为 `running` 后，首次启动 hook 会在协调器运行前预写入 `gateway_state.json`，从而让 gateway 在第一次启动时就自动拉起。仅字面值 `running` 生效。仅影响首次启动：若已有 `gateway_state.json`，绝不会被覆盖，因此被刻意停止的 gateway 在重启后仍保持停止。在 s6 镜像之外为空操作。 |
 | `HERMES_FILE_MUTATION_VERIFIER` | 启用每轮文件变更验证器页脚（默认：`true`）。启用后，Hermes 附加一个建议列表，列出本轮中失败且未被成功写入覆盖的 `write_file`/`patch` 调用。设为 `0`、`false`、`no` 或 `off` 可抑制。镜像 `config.yaml` 中的 `display.file_mutation_verifier`；设置时环境变量优先。 |
 | `HERMES_CRON_TIMEOUT` | cron 任务 agent 运行的不活动超时（秒，默认：`600`）。agent 在主动调用工具或接收流 token 时可无限运行——仅在空闲时触发。设为 `0` 表示无限制。 |
-| `HERMES_CRON_SCRIPT_TIMEOUT` | cron 任务附加的预运行脚本超时（秒，默认：`120`）。对需要更长执行时间的脚本（例如随机延迟的反机器人计时）可增大此值。也可通过 `config.yaml` 中的 `cron.script_timeout_seconds` 配置。 |
+| `HERMES_CRON_SCRIPT_TIMEOUT` | cron 任务附加的预运行脚本超时（秒，默认：`3600`）。设为 `0` 表示不设墙钟时限。仅限制脚本；skill/agent 任务使用独立的 `HERMES_CRON_TIMEOUT` 不活动预算。也可通过 `config.yaml` 中的 `cron.script_timeout_seconds` 配置。 |
 | `HERMES_CRON_MAX_PARALLEL` | 每次 tick 并行运行的最大 cron 任务数（默认：`4`）。 |
 
 ## Agent 行为
